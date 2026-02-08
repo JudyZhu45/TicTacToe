@@ -11,14 +11,14 @@ class ViewController: UIViewController {
     // 插座 1：九宫格的集合
     @IBOutlet var dropZones: [UIView]!
     
-    // 插座 2：游戏角色的 Label
+//    // 插座 2：游戏角色的 Label
     @IBOutlet weak var playerXLabel: UILabel!
     @IBOutlet weak var playerOLabel: UILabel!
-    
-    // 插座 3：弹出的信息视图
-    @IBOutlet weak var infoView: InfoView!
-    @IBOutlet weak var info: UILabel!
-    
+//    
+//    // 插座 3：弹出的信息视图
+   @IBOutlet weak var infoView: InfoView!
+   @IBOutlet weak var info: UILabel!
+
     override func viewDidLoad() {
         super.viewDidLoad()
         
@@ -58,62 +58,172 @@ class ViewController: UIViewController {
         if sender.state == .began || sender.state == .changed {
             piece.center = CGPoint(x: piece.center.x + translation.x, y: piece.center.y + translation.y)
             sender.setTranslation(.zero, in: view)
+            
+            // 实时检查是否在某个格子上方，进行高亮
+            updateZoneHighlight(for: piece)
         }
         
-        // 2. 手指松开
+        // 2. 手指松开 - 检查是否触发了某个格子
         if sender.state == .ended {
             var didSnap = false
             
-            // 遍历那 9 个格子看中了没
+            // 遍历所有格子
             for (index, zone) in dropZones.enumerated() {
-                if piece.frame.intersects(zone.frame) && grid.isSquareEmpty(at: index) {
-                    // 击中目标！吸附过去
-                    UIView.animate(withDuration: 0.2) {
-                        piece.center = zone.center
+                // 获取 zone 在主 view 坐标系中的位置
+                guard let gridView = zone.superview else { continue }
+                let zoneFrameInView = gridView.convert(zone.frame, to: view)
+                
+                // 检查 piece 中心是否在 zone 内
+                if zoneFrameInView.contains(piece.center) {
+                    // Check if position is already occupied
+                    if !grid.isSquareEmpty(at: index) {
+                        // Position occupied - show forbidden hint
+                        showForbiddenHint()
+                    } else {
+                        // 成功放置！在 zone 中生成副本
+                        guard let sourceLabel = piece as? UILabel else { return }
+                        
+                        let copiedLabel = UILabel()
+                        copiedLabel.text = sourceLabel.text
+                        copiedLabel.font = sourceLabel.font
+                        copiedLabel.textColor = sourceLabel.textColor
+                        copiedLabel.textAlignment = .center
+                        copiedLabel.sizeToFit()
+                        
+                        // 把副本放在 zone 的中心（在主 view 坐标系中）
+                        copiedLabel.center = CGPoint(
+                            x: zoneFrameInView.midX,
+                            y: zoneFrameInView.midY
+                        )
+                        view.addSubview(copiedLabel)
+                        
+                        // 记录游戏数据
+                        grid.occupies(at: index, with: currentPlayer)
+                        didSnap = true
+                        
+                        // 原始 piece 弹回初始位置
+                        UIView.animate(withDuration: 0.3) {
+                            piece.center = (self.currentPlayer == .x) ? self.xInitialCenter : self.oInitialCenter
+                        }
+                        
+                        // 检查游戏状态
+                        checkGameStatus()
                     }
-                    piece.isUserInteractionEnabled = false // 固定住，不能再动了
-                    grid.occupies(at: index, with: currentPlayer) // 记录数据
-                    didSnap = true
-                    checkGameStatus() // 检查输赢
+                    
+                    // 清除所有高亮
+                    clearZoneHighlights()
                     break
                 }
             }
             
-            // 3. 没投中，弹回原位
+            // 没有成功放置，弹回原位
             if !didSnap {
                 UIView.animate(withDuration: 0.3) {
                     piece.center = (self.currentPlayer == .x) ? self.xInitialCenter : self.oInitialCenter
                 }
+                // 清除高亮
+                clearZoneHighlights()
+            }
+        }
+    }
+    
+    // 更新格子高亮状态
+    private func updateZoneHighlight(for piece: UIView) {
+        for (index, zone) in dropZones.enumerated() {
+            guard let gridView = zone.superview else { continue }
+            let zoneFrameInView = gridView.convert(zone.frame, to: view)
+            
+            if zoneFrameInView.contains(piece.center) {
+                // piece is over this zone
+                if grid.isSquareEmpty(at: index) {
+                    // Can place - green highlight
+                    highlightZone(zone, with: UIColor.green.withAlphaComponent(0.3))
+                } else {
+                    // Occupied - red highlight
+                    highlightZone(zone, with: UIColor.red.withAlphaComponent(0.3))
+                }
+            } else {
+                // Remove highlight from this zone
+                clearZoneHighlight(zone)
+            }
+        }
+    }
+    
+    // Highlight a single zone
+    private func highlightZone(_ zone: UIView, with color: UIColor) {
+        if zone.backgroundColor == color {
+            return // Already this color, no need to reset
+        }
+        zone.backgroundColor = color
+    }
+    
+    // Clear highlight from a single zone
+    private func clearZoneHighlight(_ zone: UIView) {
+        zone.backgroundColor = UIColor(white: 0, alpha: 0)
+    }
+    
+    // Clear highlights from all zones
+    private func clearZoneHighlights() {
+        for zone in dropZones {
+            clearZoneHighlight(zone)
+        }
+    }
+    
+    // Show forbidden hint
+    private func showForbiddenHint() {
+        let forbidLabel = UILabel()
+        forbidLabel.text = "❌ Position Occupied"
+        forbidLabel.textColor = .white
+        forbidLabel.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        forbidLabel.textAlignment = .center
+        forbidLabel.backgroundColor = UIColor(red: 1, green: 0.2, blue: 0.2, alpha: 0.8)
+        forbidLabel.layer.cornerRadius = 8
+        forbidLabel.layer.masksToBounds = true
+        forbidLabel.sizeToFit()
+        forbidLabel.frame = CGRect(x: 0, y: 0, width: forbidLabel.frame.width + 30, height: 45)
+        forbidLabel.center = CGPoint(x: view.center.x, y: 100)
+        
+        view.addSubview(forbidLabel)
+        
+        // Auto remove after 1 second
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            UIView.animate(withDuration: 0.3, animations: {
+                forbidLabel.alpha = 0
+            }) { _ in
+                forbidLabel.removeFromSuperview()
             }
         }
     }
     func checkGameStatus() {
-        // 1. 检查是否有赢家
+        // 1. Check if there is a winner
         if let winner = grid.checkWinner() {
             isGameOver = true
-            let winnerName = (winner == .x) ? "X" : "O"
-            showInfo(with: "恭喜！\(winnerName) 赢了！")
+            let winnerName = (winner == .x) ? "X Wins!" : "O Wins!"
+            showInfo(with: winnerName)
             
         }
-        // 2. 如果没赢家，检查是否平局（格子满了）
+        // 2. Check if it's a tie
         else if grid.isTie() {
             isGameOver = true
-            showInfo(with: "握手言和，这是平局！")
+            showInfo(with: "Draw!")
             
         }
-        // 3. 游戏继续，换下一个人
+        // 3. Game continues, switch player
         else {
             switchPlayer()
         }
     }
     func showInfo(with message: String) {
-        // 1. 设置文字（添加安全检查）
-        infoView.messageLabel?.text = message
+        // 1. 设置文字
+        info.text = message
         
-        // 2. 确保它在动画开始前处于屏幕上方
+        // 2. 把 infoView 移到最上方（确保不被其他视图挡住）
+        view.bringSubviewToFront(infoView)
+        
+        // 3. 确保它在动画开始前处于屏幕上方
         infoView.center = CGPoint(x: view.center.x, y: -200)
         
-        // 3. 掉落动画：使用弹簧效果 (usingSpringWithDamping) 更有趣
+        // 4. 掉落动画：使用弹簧效果
         UIView.animate(withDuration: 0.6, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: .curveEaseOut, animations: {
             self.infoView.center = self.view.center // 移动到画面中心
         }, completion: nil)
@@ -124,7 +234,14 @@ class ViewController: UIViewController {
         isGameOver = false
         currentPlayer = .x
         
-        // 2. 把 X 和 O 标签移回它们最初的位置
+        // 2. 清除格子里放置的所有副本 (除了原始的 playerXLabel 和 playerOLabel)
+        for subview in view.subviews {
+            if subview is UILabel && subview != playerXLabel && subview != playerOLabel && subview != info {
+                subview.removeFromSuperview()
+            }
+        }
+        
+        // 3. 把 X 和 O 标签移回它们最初的位置
         UIView.animate(withDuration: 0.5) {
             self.playerXLabel.center = self.xInitialCenter
             self.playerOLabel.center = self.oInitialCenter
@@ -133,13 +250,12 @@ class ViewController: UIViewController {
             self.playerXLabel.alpha = 1.0
             self.playerOLabel.alpha = 0.5
             
-            // 这里可以遍历并删除你在格子里生成的棋子副本（如果有的话）
-            // 或者简单的把 X 和 O 设为可交互
+            // 重新启用交互
             self.playerXLabel.isUserInteractionEnabled = true
             self.playerOLabel.isUserInteractionEnabled = false
         }
         
-        // 3. 再次启动 X 的开场动画
+        // 4. 再次启动 X 的开场动画
         startTurn(for: .x)
     }
     func startTurn(for player: Player) {
@@ -180,3 +296,4 @@ class ViewController: UIViewController {
         }
     }
 }
+
